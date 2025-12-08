@@ -5,7 +5,12 @@ import { randomUUID, createHash } from "crypto";
 import cookieParser from "cookie-parser";
 import "dotenv/config";
 import { z } from "zod";
-import express, { Request, Response, NextFunction } from "express";
+import express, {
+  Request,
+  Response,
+  NextFunction,
+  CookieOptions,
+} from "express";
 import cors from "cors";
 import cron from "node-cron";
 import helmet from "helmet";
@@ -67,13 +72,16 @@ if (!JWT_SECRET) {
 
 const COOKIE_NAME = "sbc_token";
 
-const BASE_COOKIE_OPTIONS = {
+// On typpe explicitement le SameSite pour qu'il soit compatible avec Express
+const sameSiteOption: CookieOptions["sameSite"] = isProd ? "none" : "lax";
+
+const BASE_COOKIE_OPTIONS: CookieOptions = {
   httpOnly: true,
-  secure: isProd,
-  sameSite: "strict" as const, // 🔐 SameSite strict
+  secure: isProd,      // en prod, toujours HTTPS
+  sameSite: sameSiteOption, // ✅ accepte le cross-site en prod
 };
 
-const AUTH_COOKIE_OPTIONS = {
+const AUTH_COOKIE_OPTIONS: CookieOptions = {
   ...BASE_COOKIE_OPTIONS,
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours
 };
