@@ -306,24 +306,41 @@ const passwordResetConfirmSchema = z.object({
 });
 
 /* ------------------------------------------------------------------ */
-/*                         MAIL (GMAIL TRANSPORTER)                    */
+/*                         MAIL (BREVO SMTP)                           */
 /* ------------------------------------------------------------------ */
 
-const { GMAIL_USER, GMAIL_APP_PASSWORD } = process.env;
+const {
+  BREVO_SMTP_HOST,
+  BREVO_SMTP_PORT,
+  BREVO_SMTP_LOGIN,
+  BREVO_SMTP_PASSWORD,
+  EMAIL_FROM,
+} = process.env;
 
-if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
-  logger.error("❌ GMAIL_USER ou GMAIL_APP_PASSWORD manquant dans .env");
+export const isEmailEnabled =
+  !!BREVO_SMTP_HOST &&
+  !!BREVO_SMTP_LOGIN &&
+  !!BREVO_SMTP_PASSWORD &&
+  !!EMAIL_FROM;
+
+if (!isEmailEnabled) {
+  logger.error(
+    "❌ Config SMTP Brevo incomplète : vérifier BREVO_SMTP_HOST / BREVO_SMTP_PORT / BREVO_SMTP_LOGIN / BREVO_SMTP_PASSWORD / EMAIL_FROM."
+  );
 } else {
-  logger.info("✅ Config mail (GMAIL) chargée.");
+  logger.info("✅ Config mail (Brevo SMTP) chargée.");
 }
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: BREVO_SMTP_HOST,
+  port: Number(BREVO_SMTP_PORT) || 587,
+  secure: false, // STARTTLS automatique sur 587
   auth: {
-    user: GMAIL_USER,
-    pass: GMAIL_APP_PASSWORD,
+    user: BREVO_SMTP_LOGIN,
+    pass: BREVO_SMTP_PASSWORD,
   },
 });
+
 
 /* ------------------------------------------------------------------ */
 /*                            SENTRY INIT                              */
@@ -842,22 +859,24 @@ app.post("/api/faq-question", async (req: Request, res: Response) => {
 
     const { name, phone, email, question } = parseResult.data;
 
-    const mailOptions = {
-      from: `"Smart Business Corp" <${process.env.GMAIL_USER}>`,
-      replyTo: email,
-      to: "koupohelisee@gmail.com",
-      subject: "Nouvelle question FAQ — Smart Business Corp",
-      html: `
-        <h3>Nouvelle question soumise depuis la FAQ</h3>
-        <p><strong>Nom :</strong> ${escapeHtml(name)}</p>
-        <p><strong>Téléphone :</strong> ${escapeHtml(phone)}</p>
-        <p><strong>Email :</strong> ${escapeHtml(email)}</p>
-        <p><strong>Question :</strong></p>
-        <p>${escapeHtml(question)}</p>
-      `,
-    };
+    if (isEmailEnabled) {
+  const mailOptions = {
+    from: EMAIL_FROM,
+    replyTo: email,
+    to: "koupohelisee@gmail.com",
+    subject: "Nouvelle question FAQ — Smart Business Corp",
+    html: `
+      <h3>Nouvelle question soumise depuis la FAQ</h3>
+      <p><strong>Nom :</strong> ${escapeHtml(name)}</p>
+      <p><strong>Téléphone :</strong> ${escapeHtml(phone)}</p>
+      <p><strong>Email :</strong> ${escapeHtml(email)}</p>
+      <p><strong>Question :</strong></p>
+      <p>${escapeHtml(question)}</p>
+    `,
+  };
 
-    await transporter.sendMail(mailOptions);
+  await transporter.sendMail(mailOptions);
+}
 
     return res.json({
       success: true,
@@ -947,41 +966,35 @@ app.post(
 
         // 🔔 Notifs admin (mail + SMS + WhatsApp)
         try {
-          if (GMAIL_USER && GMAIL_APP_PASSWORD) {
-            await transporter.sendMail({
-              from: `"Smart Business Corp - Support" <${GMAIL_USER}>`,
-              to: "koupohelisee@gmail.com",
-              subject: "Nouveau message assistance - nécessite un admin",
-              html: `
-                <h3>Message support à traiter</h3>
-                <p><strong>Conversation #${conversation.id}</strong></p>
-                <p><strong>Utilisateur :</strong> ${escapeHtml(
-                  user?.fullName || "Inconnu"
-                )} (#${userId})</p>
-                <p><strong>Téléphone :</strong> ${escapeHtml(
-                  user?.phone || "-"
-                )}</p>
-                <p><strong>Email :</strong> ${escapeHtml(
-                  user?.email || "-"
-                )}</p>
-                <p><strong>Message :</strong></p>
-                <p>${escapeHtml(message)}</p>
-                ${
-                  history && history.length
-                    ? `<hr/><p><strong>Historique récent :</strong></p><ul>${history
-                        .slice(-5)
-                        .map(
-                          (h) =>
-                            `<li>[${escapeHtml(
-                              h.sender
-                            )}] ${escapeHtml(h.text)}</li>`
-                        )
-                        .join("")}</ul>`
-                    : ""
-                }
-              `,
-            });
-          }
+          if (isEmailEnabled) {
+  await transporter.sendMail({
+    from: EMAIL_FROM,
+    to: "koupohelisee@gmail.com",
+    subject: "Nouveau message assistance - nécessite un admin",
+    html: `
+      <h3>Message support à traiter</h3>
+      <p><strong>Conversation #${conversation.id}</strong></p>
+      <p><strong>Utilisateur :</strong> ${escapeHtml(
+        user?.fullName || "Inconnu"
+      )} (#${userId})</p>
+      <p><strong>Téléphone :</strong> ${escapeHtml(user?.phone || "-")}</p>
+      <p><strong>Email :</strong> ${escapeHtml(user?.email || "-")}</p>
+      <p><strong>Message :</strong></p>
+      <p>${escapeHtml(message)}</p>
+      ${
+        history && history.length
+          ? `<hr/><p><strong>Historique récent :</strong></p><ul>${history
+              .slice(-5)
+              .map(
+                (h) =>
+                  `<li>[${escapeHtml(h.sender)}] ${escapeHtml(h.text)}</li>`
+              )
+              .join("")}</ul>`
+          : ""
+      }
+    `,
+  });
+}
 
           await notifyAdminSms(
             `Support: msg user #${userId}, conv #${conversation.id}`
@@ -1875,25 +1888,26 @@ app.post(
       try {
         const user = await prisma.user.findUnique({ where: { id: userId } });
 
-        if (user && GMAIL_USER && GMAIL_APP_PASSWORD) {
-          await transporter.sendMail({
-            from: `"Smart Business Corp" <${GMAIL_USER}>`,
-            to: "koupohelisee@gmail.com", // mail admin
-            subject: "Nouvelle demande de retrait (PENDING)",
-            html: `
-              <h3>Nouvelle demande de retrait</h3>
-              <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
-              <p><strong>Téléphone :</strong> ${user.phone}</p>
-              <p><strong>Email :</strong> ${user.email || "-"}</p>
-              <p><strong>Montant demandé :</strong> ${amount.toLocaleString(
-                "fr-FR"
-              )} XOF</p>
-              <p><strong>Numéro Wave :</strong> ${waveNumber}</p>
-              <p><strong>ID Retrait :</strong> ${withdrawal.id}</p>
-              <p>Statut actuel : <strong>PENDING</strong></p>
-            `,
-          });
-        }
+        if (user && isEmailEnabled) {
+  await transporter.sendMail({
+    from: EMAIL_FROM,
+    to: "koupohelisee@gmail.com",
+    subject: "Nouvelle demande de retrait (PENDING)",
+    html: `
+      <h3>Nouvelle demande de retrait</h3>
+      <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
+      <p><strong>Téléphone :</strong> ${user.phone}</p>
+      <p><strong>Email :</strong> ${user.email || "-"}</p>
+      <p><strong>Montant demandé :</strong> ${amount.toLocaleString(
+        "fr-FR"
+      )} XOF</p>
+      <p><strong>Numéro Wave :</strong> ${waveNumber}</p>
+      <p><strong>ID Retrait :</strong> ${withdrawal.id}</p>
+      <p>Statut actuel : <strong>PENDING</strong></p>
+    `,
+  });
+}
+
       } catch (mailErr) {
         console.error("Erreur envoi mail admin retrait:", mailErr);
         // on ne bloque pas la réponse client si le mail échoue
@@ -1996,41 +2010,42 @@ async function notifyNewInvestmentSafely(params: {
     const montantTxt = amountXOF.toLocaleString("fr-FR");
 
     // 📧 Mail admin (avec timeout interne pour éviter de bloquer trop longtemps)
-    if (GMAIL_USER && GMAIL_APP_PASSWORD) {
-      try {
-        await Promise.race([
-          transporter.sendMail({
-            from: `"Smart Business Corp" <${GMAIL_USER}>`,
-            to: "koupohelisee@gmail.com",
-            subject: "Nouvelle demande d'investissement (PENDING)",
-            html: `
-              <h3>Nouvelle demande d'investissement</h3>
-              <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
-              <p><strong>Téléphone :</strong> ${user.phone}</p>
-              <p><strong>Email :</strong> ${user.email || "-"}</p>
-              <p><strong>Montant :</strong> ${montantTxt} XOF</p>
-              <p><strong>ID Investissement :</strong> ${investmentId}</p>
-              <p>Statut actuel : <strong>PENDING</strong></p>
-            `,
-          }),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Timeout email nouvelle demande investissement")),
-              10_000
-            )
-          ),
-        ]);
-      } catch (err) {
-        logger.error(
-          { err },
-          "Erreur notification email nouvelle demande investissement"
-        );
-      }
-    } else {
-      logger.warn(
-        "GMAIL_USER ou GMAIL_APP_PASSWORD manquant: pas d'email nouvelle demande investissement."
-      );
-    }
+    // 📧 Mail admin (Brevo SMTP)
+if (isEmailEnabled) {
+  try {
+    await Promise.race([
+      transporter.sendMail({
+        from: EMAIL_FROM,
+        to: "koupohelisee@gmail.com",
+        subject: "Nouvelle demande d'investissement (PENDING)",
+        html: `
+          <h3>Nouvelle demande d'investissement</h3>
+          <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
+          <p><strong>Téléphone :</strong> ${user.phone}</p>
+          <p><strong>Email :</strong> ${user.email || "-"}</p>
+          <p><strong>Montant :</strong> ${montantTxt} XOF</p>
+          <p><strong>ID Investissement :</strong> ${investmentId}</p>
+          <p>Statut actuel : <strong>PENDING</strong></p>
+        `,
+      }),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Timeout email nouvelle demande investissement")),
+          10_000
+        )
+      ),
+    ]);
+  } catch (err) {
+    logger.error(
+      { err },
+      "Erreur notification email nouvelle demande investissement"
+    );
+  }
+} else {
+  logger.warn(
+    "Config SMTP Brevo incomplète: pas d'email nouvelle demande investissement."
+  );
+}
 
     // 📲 SMS admin
     try {
@@ -3404,19 +3419,20 @@ app.post(
           );
         }
 
-        if (GMAIL_USER && GMAIL_APP_PASSWORD && u.email) {
-          await transporter.sendMail({
-            from: `"Smart Business Corp - Support" <${GMAIL_USER}>`,
-            to: u.email,
-            subject: "Nouvelle réponse de l’assistance Smart Business Corp",
-            html: `
-              <p>Bonjour ${u.fullName},</p>
-              <p>Vous avez reçu une nouvelle réponse de l’assistance Smart Business Corp&nbsp;:</p>
-              <blockquote>${message}</blockquote>
-              <p>Connectez-vous à votre espace client pour continuer la conversation.</p>
-            `,
-          });
-        }
+        if (isEmailEnabled && u.email) {
+  await transporter.sendMail({
+    from: EMAIL_FROM,
+    to: u.email,
+    subject: "Nouvelle réponse de l’assistance Smart Business Corp",
+    html: `
+      <p>Bonjour ${u.fullName},</p>
+      <p>Vous avez reçu une nouvelle réponse de l’assistance Smart Business Corp&nbsp;:</p>
+      <blockquote>${escapeHtml(message)}</blockquote>
+      <p>Connectez-vous à votre espace client pour continuer la conversation.</p>
+    `,
+  });
+}
+
       } catch (notifErr) {
         console.error("Erreur notif client support:", notifErr);
       }
