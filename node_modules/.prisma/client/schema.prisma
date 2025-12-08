@@ -1,0 +1,154 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ⚠️ Pas d'enums Prisma avec SQLite : on stocke en String
+// et on gère les enums côté TypeScript.
+
+model User {
+  id           Int      @id @default(autoincrement())
+  fullName     String
+  phone        String   @unique
+  email        String?
+  waveNumber   String
+  passwordHash String
+  isActive     Boolean  @default(true)
+  role         String   @default("USER") // "USER" ou "ADMIN"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Nouveau champs profil
+  birthDate          DateTime?
+  idType             String?
+  idNumber           String?
+  orangeMoneyNumber  String?
+  country            String?
+  city               String?
+  securityQuestion   String?
+  securityAnswerHash String?
+
+  // relations
+  withdrawals   Withdrawal[]
+  wallet        Wallet?
+  investments   Investment[]
+  ledgerEntries LedgerEntry[]
+  sessions      Session[]
+
+  // 🔴 Relations support (côté inverse demandé par Prisma)
+  supportConversations SupportConversation[]
+}
+
+model LedgerEntry {
+  id     Int  @id @default(autoincrement())
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+
+  /// "CREDIT" ou "DEBIT"
+  type   String
+  amount Int
+
+  source    String // ex: "CRON_GAIN", "WITHDRAWAL_PROCESSED"
+  reference String? // ex: "INVESTMENT#12", "WITHDRAWAL#5"
+
+  createdAt DateTime @default(now())
+}
+
+model Session {
+  id        Int       @id @default(autoincrement())
+  jti       String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id])
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  userAgent  String?
+  ipHash     String?
+  lastSeenAt DateTime?
+}
+
+model Wallet {
+  id      Int  @id @default(autoincrement())
+  balance Int  @default(0)
+  userId  Int  @unique
+  user    User @relation(fields: [userId], references: [id])
+}
+
+model Tier {
+  id          Int          @id @default(autoincrement())
+  amountXOF   Int
+  investments Investment[]
+}
+
+// ✅ Conversation de support
+model SupportConversation {
+  id     Int  @id @default(autoincrement())
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+
+  // "OPEN" | "NEEDS_ADMIN" | "CLOSED"
+  status String @default("OPEN")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages SupportMessage[]
+}
+
+// ✅ Message de support
+model SupportMessage {
+  id             Int                 @id @default(autoincrement())
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id])
+  conversationId Int
+
+  // "USER" | "ADMIN" | "BOT"
+  sender String
+  text   String
+
+  createdAt   DateTime @default(now())
+  seenByAdmin Boolean  @default(false)
+  seenByUser  Boolean  @default(false)
+}
+
+model Withdrawal {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  amount      Int
+  waveNumber  String
+  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED, PAID...
+  note        String? // message optionnel de l’utilisateur
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+}
+
+// ⚠️ On enlève l'enum (SQLite + ta version de Prisma ne le supporte pas)
+// enum InvestmentStatus { ... }
+
+model Investment {
+  id Int @id @default(autoincrement())
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  principalXOF   Int
+  accruedGainXOF Int @default(0)
+
+  /// "PENDING" | "ACTIVE" | "REJECTED" | "CLOSED"
+  status String @default("PENDING")
+
+  createdAt  DateTime  @default(now())
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  endDate    DateTime
+
+  // 👉 mémorise la dernière date de crédit
+  lastGainAt DateTime?
+
+  tierId Int
+  tier   Tier @relation(fields: [tierId], references: [id])
+}
