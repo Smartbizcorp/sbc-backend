@@ -338,6 +338,7 @@ const allowedOrigins = [
   "http://localhost:4001",
   "https://app.smart-business-corp.com",
   "https://smart-business-corp.com",
+  "https://smartbusinesscorp.org",
 ];
 
 const corsOptions: cors.CorsOptions = {
