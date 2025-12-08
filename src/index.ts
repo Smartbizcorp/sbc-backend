@@ -1972,6 +1972,115 @@ app.get(
   }
 );
 
+// 🔔 Notifications pour une nouvelle demande d'investissement
+async function notifyNewInvestmentSafely(params: {
+  userId: number;
+  amountXOF: number;
+  investmentId: number;
+}) {
+  const { userId, amountXOF, investmentId } = params;
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      logger.warn(
+        { userId },
+        "Impossible d'envoyer les notifications: utilisateur introuvable."
+      );
+      return;
+    }
+
+    const montantTxt = amountXOF.toLocaleString("fr-FR");
+
+    // 📧 Mail admin (avec timeout interne pour éviter de bloquer trop longtemps)
+    if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+      try {
+        await Promise.race([
+          transporter.sendMail({
+            from: `"Smart Business Corp" <${GMAIL_USER}>`,
+            to: "koupohelisee@gmail.com",
+            subject: "Nouvelle demande d'investissement (PENDING)",
+            html: `
+              <h3>Nouvelle demande d'investissement</h3>
+              <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
+              <p><strong>Téléphone :</strong> ${user.phone}</p>
+              <p><strong>Email :</strong> ${user.email || "-"}</p>
+              <p><strong>Montant :</strong> ${montantTxt} XOF</p>
+              <p><strong>ID Investissement :</strong> ${investmentId}</p>
+              <p>Statut actuel : <strong>PENDING</strong></p>
+            `,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Timeout email nouvelle demande investissement")),
+              10_000
+            )
+          ),
+        ]);
+      } catch (err) {
+        logger.error(
+          { err },
+          "Erreur notification email nouvelle demande investissement"
+        );
+      }
+    } else {
+      logger.warn(
+        "GMAIL_USER ou GMAIL_APP_PASSWORD manquant: pas d'email nouvelle demande investissement."
+      );
+    }
+
+    // 📲 SMS admin
+    try {
+      await notifyAdminSms(
+        `Nouvelle demande d'investissement: ${montantTxt} XOF (ID #${investmentId})`
+      );
+    } catch (e) {
+      logger.error({ e }, "Erreur notif SMS nouvelle demande investissement");
+    }
+
+    // 💬 WhatsApp admin
+    try {
+      await notifyAdminWhatsApp(
+        `Nouvelle demande d'investissement: ${montantTxt} XOF (ID #${investmentId})`
+      );
+    } catch (e) {
+      logger.error({ e }, "Erreur notif WhatsApp nouvelle demande investissement");
+    }
+
+    // Notifications client (si numéro dispo)
+    if (user.phone) {
+      try {
+        await sendSms(
+          user.phone,
+          `Smart Business Corp: votre demande d'investissement de ${montantTxt} XOF est en attente de validation par un administrateur.`
+        );
+      } catch (e) {
+        logger.error({ e }, "Erreur SMS client nouvelle demande investissement");
+      }
+
+      try {
+        await sendWhatsAppText(
+          user.phone,
+          `Smart Business Corp\n\nVotre demande d'investissement de ${montantTxt} XOF a été enregistrée.\n\nStatut: EN ATTENTE DE VALIDATION.\nVous recevrez une confirmation dès que l'administrateur aura vérifié le paiement.`
+        );
+      } catch (e) {
+        logger.error(
+          { e },
+          "Erreur WhatsApp client nouvelle demande investissement"
+        );
+      }
+    }
+  } catch (err) {
+    logger.error(
+      { err },
+      "Erreur globale notification nouvelle demande investissement (mail/SMS/WhatsApp)"
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*             CRÉER UN INVESTISSEMENT (PENDING + NOTIFS)             */
 /* ------------------------------------------------------------------ */
@@ -2032,72 +2141,22 @@ app.post(
         },
       });
 
-      // 🔔 Notifications (email + SMS + WhatsApp)
-      try {
-        const user = await prisma.user.findUnique({
-          where: { id: userId },
-        });
+      // ✅ On répond TOUT DE SUITE au frontend
+      res.status(201).json({ success: true, investment });
 
-        // 📧 Mail admin
-        if (user && GMAIL_USER && GMAIL_APP_PASSWORD) {
-          await transporter.sendMail({
-            from: `"Smart Business Corp" <${GMAIL_USER}>`,
-            to: "koupohelisee@gmail.com",
-            subject: "Nouvelle demande d'investissement (PENDING)",
-            html: `
-              <h3>Nouvelle demande d'investissement</h3>
-              <p><strong>Client :</strong> ${user.fullName} (#${user.id})</p>
-              <p><strong>Téléphone :</strong> ${user.phone}</p>
-              <p><strong>Email :</strong> ${user.email || "-"}</p>
-              <p><strong>Montant :</strong> ${amountXOF.toLocaleString(
-                "fr-FR"
-              )} XOF</p>
-              <p><strong>ID Investissement :</strong> ${investment.id}</p>
-              <p>Statut actuel : <strong>PENDING</strong></p>
-            `,
-          });
-        }
-
-        const montantTxt = amountXOF.toLocaleString("fr-FR");
-
-        // 📲 SMS admin
-        await notifyAdminSms(
-          `Nouvelle demande d'investissement: ${montantTxt} XOF (ID #${investment.id})`
-        );
-
-        // 💬 WhatsApp admin
-        await notifyAdminWhatsApp(
-          `Nouvelle demande d'investissement: ${montantTxt} XOF (ID #${investment.id})`
-        );
-
-        if (user?.phone) {
-          // 📲 SMS client
-          await sendSms(
-            user.phone,
-            `Smart Business Corp: votre demande d'investissement de ${montantTxt} XOF est en attente de validation par un administrateur.`
-          );
-
-          // 💬 WhatsApp client
-          await sendWhatsAppText(
-            user.phone,
-            `Smart Business Corp\n\nVotre demande d'investissement de ${montantTxt} XOF a été enregistrée.\n\nStatut: EN ATTENTE DE VALIDATION.\nVous recevrez une confirmation dès que l'administrateur aura vérifié le paiement.`
-          );
-        }
-      } catch (notifErr) {
-        console.error(
-          "Erreur notification nouvelle demande investissement (mail/SMS/WhatsApp):",
-          notifErr
-        );
-        // On ne bloque pas la création même si les notifications échouent
-      }
-
-      return res.json({ success: true, investment });
+      // 🔔 Notifications en arrière-plan (ne bloquent pas la réponse)
+      void notifyNewInvestmentSafely({
+        userId,
+        amountXOF,
+        investmentId: investment.id,
+      });
     } catch (err) {
       console.error("Erreur investments (POST):", err);
       return res.status(500).json({ success: false });
     }
   }
 );
+
 
 /* ------------------------------------------------------------------ */
 /*                 ADMIN – ROUTER INVESTISSEMENTS EXISTANT            */
