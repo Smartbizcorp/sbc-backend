@@ -1,5 +1,6 @@
 import adminInvestmentsRouter from "./routes/adminInvestments";
 import * as Sentry from "@sentry/node";
+import { createNotificationForUser, NotificationType } from "./services/notifications";
 import { nodeProfilingIntegration } from "@sentry/profiling-node";
 import { randomUUID, createHash } from "crypto";
 import cookieParser from "cookie-parser";
@@ -2445,6 +2446,105 @@ app.get(
 );
 
 /* ------------------------------------------------------------------ */
+/*                             NOTIFICATIONS                           */
+/* ------------------------------------------------------------------ */
+
+// Nombre de notifications non lues
+app.get(
+  "/api/notifications/unread-count",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const count = await prisma.notification.count({
+        where: {
+          userId,
+          readAt: null,
+        },
+      });
+
+      return res.json({ success: true, unreadCount: count });
+    } catch (err) {
+      logger.error({ err }, "Erreur GET /api/notifications/unread-count");
+      return res.status(500).json({
+        success: false,
+        message: "Erreur serveur lors du comptage des notifications.",
+      });
+    }
+  }
+);
+
+// Liste des notifications (du plus récent au plus ancien)
+app.get(
+  "/api/notifications",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      const limitRaw = (req.query.limit as string) || "50";
+      let limit = parseInt(limitRaw, 10);
+      if (isNaN(limit) || limit <= 0) limit = 50;
+      if (limit > 200) limit = 200;
+
+      const notifications = await prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      });
+
+      return res.json({
+        success: true,
+        notifications,
+      });
+    } catch (err) {
+      logger.error({ err }, "Erreur GET /api/notifications");
+      return res.status(500).json({
+        success: false,
+        message: "Erreur serveur lors de la récupération des notifications.",
+      });
+    }
+  }
+);
+
+// Marquer les notifications comme lues (toutes ou une liste d'IDs)
+app.post(
+  "/api/notifications/mark-read",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { ids, all } = req.body as { ids?: number[]; all?: boolean };
+
+      const where: any = {
+        userId,
+        readAt: null,
+      };
+
+      if (!all && ids && ids.length > 0) {
+        where.id = { in: ids };
+      }
+
+      await prisma.notification.updateMany({
+        where,
+        data: {
+          readAt: new Date(),
+        },
+      });
+
+      return res.json({ success: true });
+    } catch (err) {
+      logger.error({ err }, "Erreur POST /api/notifications/mark-read");
+      return res.status(500).json({
+        success: false,
+        message: "Erreur serveur lors de la mise à jour des notifications.",
+      });
+    }
+  }
+);
+
+/* ------------------------------------------------------------------ */
 /*                                PROFIL                              */
 /* ------------------------------------------------------------------ */
 
@@ -3211,6 +3311,26 @@ async function updateWithdrawalStatusHandler(
       "Admin a modifié le statut d'un retrait (transactionnelle)"
     );
 
+    // 🔔 Notification pour l'utilisateur
+    const w = result.updated;
+    const amountTxt = w.amount.toLocaleString("fr-FR");
+
+    if (status === "PROCESSED") {
+      await createNotificationForUser({
+        userId: w.userId,
+        type: "WITHDRAWAL_STATUS",
+        title: "Retrait traité",
+        message: `Votre demande de retrait de ${amountTxt} XOF a été traitée avec succès.`,
+      });
+    } else if (status === "REJECTED") {
+      await createNotificationForUser({
+        userId: w.userId,
+        type: "WITHDRAWAL_STATUS",
+        title: "Retrait refusé",
+        message: `Votre demande de retrait de ${amountTxt} XOF a été refusée. Veuillez contacter le support si besoin.`,
+      });
+    }
+
     return res.json({
       success: true,
       withdrawal: result.updated,
@@ -3572,9 +3692,51 @@ app.use(
 );
 
 /* ------------------------------------------------------------------ */
-/*                              LISTEN                                 */
+/*                          404 & ERROR HANDLERS                       */
+/* ------------------------------------------------------------------ */
+
+// 404 pour les routes inconnues
+app.use((req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    message: "Route introuvable.",
+  });
+});
+
+// Handler d’erreur générique
+// (ne PAS renvoyer l’erreur brute en prod)
+app.use(
+  (
+    err: any,
+    req: Request,
+    res: Response,
+    _next: NextFunction
+  ) => {
+    logger.error(
+      {
+        err,
+        path: req.path,
+        method: req.method,
+      },
+      "Erreur non gérée"
+    );
+
+    if (res.headersSent) {
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      message:
+        "Une erreur interne est survenue. L'équipe technique a été notifiée.",
+    });
+  }
+);
+
+/* ------------------------------------------------------------------ */
+/*                               LISTEN                                */
 /* ------------------------------------------------------------------ */
 
 app.listen(PORT, () => {
-  logger.info(`API running on http://localhost:${PORT}`);
+  logger.info(`🚀 API Smart Business Corp démarrée sur le port ${PORT}`);
 });

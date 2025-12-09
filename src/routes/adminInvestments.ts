@@ -3,6 +3,7 @@ import { Router, Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import logger from "../logger";
+import { createNotificationForUser } from "../services/notifications"; // 🔔 import
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -298,6 +299,27 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       "[ADMIN] Statut investissement modifié"
     );
 
+    // 🔔 NOTIFICATION UTILISATEUR APRÈS MAJ
+    const inv = result.updated;
+    const amountTxt = inv.principalXOF.toLocaleString("fr-FR");
+
+    if (newStatus === "ACTIVE") {
+      await createNotificationForUser({
+        userId: inv.userId,
+        type: "INVESTMENT_STATUS",
+        title: "Investissement activé",
+        message: `Votre investissement de ${amountTxt} XOF est maintenant actif.`,
+      });
+    } else if (newStatus === "REJECTED") {
+      await createNotificationForUser({
+        userId: inv.userId,
+        type: "INVESTMENT_STATUS",
+        title: "Investissement refusé",
+        message: `Votre demande d'investissement de ${amountTxt} XOF a été refusée.`,
+      });
+    }
+    // (pour CLOSED on ne crée rien pour l’instant, tu pourras en ajouter une si tu veux)
+
     return res.json({
       success: true,
       investment: result.updated,
@@ -314,8 +336,7 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       const meta = err.meta || {};
       return res.status(400).json({
         success: false,
-        message:
-          "Transition de statut non autorisée.",
+        message: "Transition de statut non autorisée.",
         details: meta,
       });
     }
