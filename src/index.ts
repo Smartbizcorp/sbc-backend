@@ -863,7 +863,7 @@ app.post("/api/faq-question", async (req: Request, res: Response) => {
   const mailOptions = {
     from: EMAIL_FROM,
     replyTo: email,
-    to: "koupohelisee@gmail.com",
+    to: "contact@smartbusinesscorp.org",
     subject: "Nouvelle question FAQ — Smart Business Corp",
     html: `
       <h3>Nouvelle question soumise depuis la FAQ</h3>
@@ -969,7 +969,7 @@ app.post(
           if (isEmailEnabled) {
   await transporter.sendMail({
     from: EMAIL_FROM,
-    to: "koupohelisee@gmail.com",
+    to: "contact@smartbusinesscorp.org",
     subject: "Nouveau message assistance - nécessite un admin",
     html: `
       <h3>Message support à traiter</h3>
@@ -1891,7 +1891,7 @@ app.post(
         if (user && isEmailEnabled) {
   await transporter.sendMail({
     from: EMAIL_FROM,
-    to: "koupohelisee@gmail.com",
+    to: "contact@smartbusinesscorp.org",
     subject: "Nouvelle demande de retrait (PENDING)",
     html: `
       <h3>Nouvelle demande de retrait</h3>
@@ -2016,7 +2016,7 @@ if (isEmailEnabled) {
     await Promise.race([
       transporter.sendMail({
         from: EMAIL_FROM,
-        to: "koupohelisee@gmail.com",
+        to: "contact@smartbusinesscorp.org",
         subject: "Nouvelle demande d'investissement (PENDING)",
         html: `
           <h3>Nouvelle demande d'investissement</h3>
