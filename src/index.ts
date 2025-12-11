@@ -1,3 +1,8 @@
+import {
+  getVapidPublicKey,
+  saveSubscriptionForUser,
+  sendPushToUser,
+} from "./services/push";
 import adminInvestmentsRouter from "./routes/adminInvestments";
 import * as Sentry from "@sentry/node";
 import { createNotificationForUser, NotificationType } from "./services/notifications";
@@ -3226,132 +3231,6 @@ app.post(
   }
 );
 
-// Handler partagé pour changer le statut d'un retrait
-async function updateWithdrawalStatusHandler(
-  req: AuthRequest,
-  res: Response
-) {
-  try {
-    const adminId = req.user!.id;
-    const id = Number(req.params.id);
-
-    if (Number.isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        message: "ID de retrait invalide.",
-      });
-    }
-
-    const { status } = req.body as { status: string };
-
-    const allowedStatuses = ["PENDING", "PROCESSED", "REJECTED"];
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Statut invalide. Valeurs possibles : PENDING, PROCESSED, REJECTED.",
-      });
-    }
-
-    const result = await prisma.$transaction(async (tx) => {
-      const withdrawal = await tx.withdrawal.findUnique({
-        where: { id },
-      });
-
-      if (!withdrawal) {
-        throw new Error("NOT_FOUND");
-      }
-
-      const oldStatus = withdrawal.status;
-
-      const updated = await tx.withdrawal.update({
-        where: { id },
-        data: {
-          status,
-          processedAt:
-            status === "PROCESSED"
-              ? new Date()
-              : withdrawal.processedAt,
-        },
-      });
-
-      if (status === "PROCESSED" && oldStatus !== "PROCESSED") {
-        await tx.wallet.upsert({
-          where: { userId: updated.userId },
-          update: {
-            balance: { decrement: updated.amount },
-          },
-          create: {
-            userId: updated.userId,
-            balance: -updated.amount,
-          },
-        });
-
-        await tx.ledgerEntry.create({
-          data: {
-            userId: updated.userId,
-            type: "DEBIT",
-            amount: updated.amount,
-            source: "WITHDRAWAL_PROCESSED",
-            reference: `WITHDRAWAL#${updated.id}`,
-          },
-        });
-      }
-
-      return { updated, oldStatus };
-    });
-
-    logger.info(
-      {
-        adminId,
-        withdrawalId: id,
-        oldStatus: result.oldStatus,
-        newStatus: status,
-      },
-      "Admin a modifié le statut d'un retrait (transactionnelle)"
-    );
-
-    // 🔔 Notification pour l'utilisateur
-    const w = result.updated;
-    const amountTxt = w.amount.toLocaleString("fr-FR");
-
-    if (status === "PROCESSED") {
-      await createNotificationForUser({
-        userId: w.userId,
-        type: "WITHDRAWAL_STATUS",
-        title: "Retrait traité",
-        message: `Votre demande de retrait de ${amountTxt} XOF a été traitée avec succès.`,
-      });
-    } else if (status === "REJECTED") {
-      await createNotificationForUser({
-        userId: w.userId,
-        type: "WITHDRAWAL_STATUS",
-        title: "Retrait refusé",
-        message: `Votre demande de retrait de ${amountTxt} XOF a été refusée. Veuillez contacter le support si besoin.`,
-      });
-    }
-
-    return res.json({
-      success: true,
-      withdrawal: result.updated,
-    });
-  } catch (err: any) {
-    if (err.message === "NOT_FOUND") {
-      return res.status(404).json({
-        success: false,
-        message: "Retrait introuvable.",
-      });
-    }
-
-    logger.error({ err }, "Erreur admin change withdrawal status (transaction)");
-    return res.status(500).json({
-      success: false,
-      message:
-        "Erreur serveur lors de la mise à jour du statut du retrait.",
-    });
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*                     ADMIN — SUPPORT CONVERSATIONS                   */
 /* ------------------------------------------------------------------ */
@@ -3574,7 +3453,7 @@ app.post(
 
 
 /* ------------------------------------------------------------------ */
-/*                         ADMIN — RETRAITS                            */
+/*                         ADMIN — RETRAITS                           */
 /* ------------------------------------------------------------------ */
 
 app.get(
@@ -3613,6 +3492,174 @@ app.get(
   }
 );
 
+/**
+ * Handler partagé PATCH/POST pour changer le statut d’un retrait
+ * - Transactionnelle (wallet + ledger)
+ * - Notifications internes
+ * - Push vers l'utilisateur
+ */
+async function updateWithdrawalStatusHandler(
+  req: AuthRequest,
+  res: Response
+) {
+  try {
+    const adminId = req.user!.id;
+    const id = Number(req.params.id);
+
+    if (Number.isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID de retrait invalide.",
+      });
+    }
+
+    const newStatus = (req.body.status as string) || "";
+    const allowedStatuses = ["PENDING", "PROCESSED", "REJECTED"] as const;
+
+    if (!newStatus || !allowedStatuses.includes(newStatus as any)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Statut invalide. Valeurs possibles : PENDING, PROCESSED, REJECTED.",
+      });
+    }
+
+    const { updated, oldStatus } = await prisma.$transaction(async (tx) => {
+      const withdrawal = await tx.withdrawal.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+            },
+          },
+        },
+      });
+
+      if (!withdrawal) {
+        throw new Error("NOT_FOUND");
+      }
+
+      const processedAt =
+        newStatus === "PROCESSED" ? new Date() : withdrawal.processedAt;
+
+      const updated = await tx.withdrawal.update({
+        where: { id },
+        data: {
+          status: newStatus,
+          processedAt,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+            },
+          },
+        },
+      });
+
+      // Si on passe à PROCESSED pour la première fois → débit du wallet + ledger
+      if (newStatus === "PROCESSED" && withdrawal.status !== "PROCESSED") {
+        await tx.wallet.upsert({
+          where: { userId: updated.userId },
+          update: {
+            balance: { decrement: updated.amount },
+          },
+          create: {
+            userId: updated.userId,
+            balance: -updated.amount,
+          },
+        });
+
+        await tx.ledgerEntry.create({
+          data: {
+            userId: updated.userId,
+            type: "DEBIT",
+            amount: updated.amount,
+            source: "WITHDRAWAL_PROCESSED",
+            reference: `WITHDRAWAL#${updated.id}`,
+          },
+        });
+      }
+
+      return { updated, oldStatus: withdrawal.status };
+    });
+
+    logger.info(
+      {
+        adminId,
+        withdrawalId: id,
+        oldStatus,
+        newStatus,
+      },
+      "[ADMIN] Statut retrait modifié (transactionnelle)"
+    );
+
+    // 💰 Texte lisible du montant
+    const amountTxt =
+      updated.amount != null
+        ? updated.amount.toLocaleString("fr-FR")
+        : undefined;
+
+    // 🔔 Notifications + PUSH
+    if (newStatus === "PROCESSED") {
+      await createNotificationForUser({
+        userId: updated.userId,
+        type: "WITHDRAWAL_STATUS",
+        title: "Retrait validé ✅",
+        message: amountTxt
+          ? `Votre retrait de ${amountTxt} XOF a été traité avec succès.`
+          : "Votre retrait a été traité avec succès.",
+      });
+
+      await sendPushToUser(updated.userId, {
+        title: "Retrait validé ✅",
+        body: amountTxt
+          ? `Votre retrait de ${amountTxt} XOF a été traité avec succès.`
+          : "Votre retrait a été traité avec succès.",
+        url: "https://smartbusinesscorp.org/notifications",
+      });
+    } else if (newStatus === "REJECTED") {
+      await createNotificationForUser({
+        userId: updated.userId,
+        type: "WITHDRAWAL_STATUS",
+        title: "Retrait refusé ❌",
+        message:
+          "Votre demande de retrait a été refusée. Consultez l’assistance pour plus de détails.",
+      });
+
+      await sendPushToUser(updated.userId, {
+        title: "Retrait refusé ❌",
+        body:
+          "Votre demande de retrait a été refusée. Consultez la section Assistance pour plus de détails.",
+        url: "https://smartbusinesscorp.org/notifications",
+      });
+    }
+
+    return res.json({
+      success: true,
+      withdrawal: updated,
+    });
+  } catch (err: any) {
+    if (err?.message === "NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        message: "Retrait introuvable.",
+      });
+    }
+
+    logger.error({ err }, "Erreur admin update withdrawal status");
+    return res.status(500).json({
+      success: false,
+      message: "Erreur serveur lors de la mise à jour du retrait.",
+    });
+  }
+}
+
 app.patch(
   "/api/admin/withdrawals/:id/status",
   authMiddleware,
@@ -3627,6 +3674,7 @@ app.post(
   adminMiddleware,
   updateWithdrawalStatusHandler
 );
+
 
 /* ------------------------------------------------------------------ */
 /*                         ERREURS / SENTRY                            */
@@ -3732,6 +3780,27 @@ app.use(
     });
   }
 );
+
+// ---------------------------------------------------------------------
+//  PUSH NOTIFICATIONS
+// ---------------------------------------------------------------------
+
+// Récupérer la clé publique (le front en a besoin)
+app.get("/api/push/public-key", (req, res) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+// Enregistrer une subscription
+app.post("/api/push/subscribe", authMiddleware, async (req, res) => {
+  try {
+    const userId = (req as any).user.id; // adapte à ton système
+    await saveSubscriptionForUser(userId, req.body);
+    return res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ success: false });
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /*                               LISTEN                                */

@@ -44,6 +44,8 @@ model User {
 
  // 🔔 Notifications
   notifications Notification[]
+
+  pushSubscriptions PushSubscription[]
 }
 
 model LedgerEntry {
@@ -58,6 +60,16 @@ model LedgerEntry {
   source    String // ex: "CRON_GAIN", "WITHDRAWAL_PROCESSED"
   reference String? // ex: "INVESTMENT#12", "WITHDRAWAL#5"
 
+  createdAt DateTime @default(now())
+}
+
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
   createdAt DateTime @default(now())
 }
 

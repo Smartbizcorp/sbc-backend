@@ -3,15 +3,15 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-  "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-  "build": "tsc",
-  "start": "node dist/index.js",
-  "prisma:generate": "prisma generate",
-  "prisma:migrate:dev": "prisma migrate dev",
-  "prisma:migrate:deploy": "prisma migrate deploy",
-  "seed": "ts-node-dev src/seed.ts",
-  "backup:db": "node scripts/backup-db.js"
-},
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "seed": "ts-node-dev src/seed.ts",
+    "backup:db": "node scripts/backup-db.js"
+  },
   "dependencies": {
     "@prisma/client": "^5.21.1",
     "@sentry/node": "^10.27.0",
@@ -31,6 +31,7 @@
     "pino": "^10.1.0",
     "pino-pretty": "^13.1.2",
     "twilio": "^5.10.6",
+    "web-push": "^3.6.7",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -42,6 +43,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^7.0.4",
     "@types/twilio": "^3.19.2",
+    "@types/web-push": "^3.6.4",
     "prisma": "^5.21.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.0.0"

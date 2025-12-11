@@ -2,6 +2,7 @@
 import { Router, Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
+import { sendPushToUser } from "../services/push";
 import logger from "../logger";
 import { createNotificationForUser } from "../services/notifications"; // 🔔 import
 
@@ -299,11 +300,19 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       "[ADMIN] Statut investissement modifié"
     );
 
-    // 🔔 NOTIFICATION UTILISATEUR APRÈS MAJ
+        // 🔔 NOTIFICATION UTILISATEUR + PUSH APRÈS MAJ
     const inv = result.updated;
     const amountTxt = inv.principalXOF.toLocaleString("fr-FR");
 
     if (newStatus === "ACTIVE") {
+      // ✅ PUSH vers les devices du user
+      await sendPushToUser(inv.userId, {
+        title: "Investissement activé 🚀",
+        body: `Votre investissement de ${amountTxt} XOF est maintenant en cours.`,
+        url: "https://smartbusinesscorp.org/dashboard",
+      });
+
+      // 🔔 Notification interne
       await createNotificationForUser({
         userId: inv.userId,
         type: "INVESTMENT_STATUS",
@@ -317,6 +326,13 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
         title: "Investissement refusé",
         message: `Votre demande d'investissement de ${amountTxt} XOF a été refusée.`,
       });
+
+      // (Optionnel) push aussi en cas de refus :
+      // await sendPushToUser(inv.userId, {
+      //   title: "Investissement refusé ❌",
+      //   body: `Votre demande d'investissement de ${amountTxt} XOF a été refusée.`,
+      //   url: "https://smartbusinesscorp.org/notifications",
+      // });
     }
     // (pour CLOSED on ne crée rien pour l’instant, tu pourras en ajouter une si tu veux)
 
@@ -324,6 +340,7 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
       success: true,
       investment: result.updated,
     });
+
   } catch (err: any) {
     if (err?.message === "NOT_FOUND") {
       return res.status(404).json({
