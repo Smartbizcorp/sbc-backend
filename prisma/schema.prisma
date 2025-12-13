@@ -1,89 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
-// ⚠️ Pas d'enums Prisma avec SQLite : on stocke en String
-// et on gère les enums côté TypeScript.
-
 model User {
-  id           Int      @id @default(autoincrement())
-  fullName     String
-  phone        String   @unique
-  email        String?
-  waveNumber   String
-  passwordHash String
-  isActive     Boolean  @default(true)
-  role         String   @default("USER") // "USER" ou "ADMIN"
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Nouveau champs profil
-  birthDate          DateTime?
-  idType             String?
-  idNumber           String?
-  orangeMoneyNumber  String?
-  country            String?
-  city               String?
-  securityQuestion   String?
-  securityAnswerHash String?
-
-  // relations
-  withdrawals   Withdrawal[]
-  wallet        Wallet?
-  investments   Investment[]
-  ledgerEntries LedgerEntry[]
-  sessions      Session[]
-
-  // 🔴 Relations support (côté inverse demandé par Prisma)
+  id                   Int                   @id @default(autoincrement())
+  fullName             String
+  phone                String                @unique
+  email                String?
+  waveNumber           String
+  passwordHash         String
+  isActive             Boolean               @default(true)
+  role                 String                @default("USER")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  birthDate            DateTime?
+  idType               String?
+  idNumber             String?
+  orangeMoneyNumber    String?
+  country              String?
+  city                 String?
+  securityQuestion     String?
+  securityAnswerHash   String?
+  investments          Investment[]
+  ledgerEntries        LedgerEntry[]
+  notifications        Notification[]
+  pushSubscriptions    PushSubscription[]
+  sessions             Session[]
   supportConversations SupportConversation[]
-
- // 🔔 Notifications
-  notifications Notification[]
-
-  pushSubscriptions PushSubscription[]
+  wallet               Wallet?
+  withdrawals          Withdrawal[]
 }
 
 model LedgerEntry {
-  id     Int  @id @default(autoincrement())
-  user   User @relation(fields: [userId], references: [id])
-  userId Int
-
+  id        Int      @id @default(autoincrement())
+  userId    Int
   /// "CREDIT" ou "DEBIT"
-  type   String
-  amount Int
-
-  source    String // ex: "CRON_GAIN", "WITHDRAWAL_PROCESSED"
-  reference String? // ex: "INVESTMENT#12", "WITHDRAWAL#5"
-
+  type      String
+  amount    Int
+  source    String
+  reference String?
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model PushSubscription {
   id        Int      @id @default(autoincrement())
-  user      User     @relation(fields: [userId], references: [id])
   userId    Int
   endpoint  String   @unique
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model Session {
-  id        Int       @id @default(autoincrement())
-  jti       String    @unique
-  userId    Int
-  user      User      @relation(fields: [userId], references: [id])
-  createdAt DateTime  @default(now())
-  revokedAt DateTime?
-
+  id         Int       @id @default(autoincrement())
+  jti        String    @unique
+  userId     Int
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
   userAgent  String?
   ipHash     String?
   lastSeenAt DateTime?
+  user       User      @relation(fields: [userId], references: [id])
 }
 
 model Wallet {
@@ -99,86 +83,64 @@ model Tier {
   investments Investment[]
 }
 
-// ✅ Conversation de support
 model SupportConversation {
-  id     Int  @id @default(autoincrement())
-  user   User @relation(fields: [userId], references: [id])
-  userId Int
-
-  // "OPEN" | "NEEDS_ADMIN" | "CLOSED"
-  status String @default("OPEN")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  messages SupportMessage[]
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  status    String           @default("OPEN")
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id])
+  messages  SupportMessage[]
 }
 
-// ✅ Message de support
 model SupportMessage {
   id             Int                 @id @default(autoincrement())
-  conversation   SupportConversation @relation(fields: [conversationId], references: [id])
   conversationId Int
-
-  // "USER" | "ADMIN" | "BOT"
-  sender String
-  text   String
-
-  createdAt   DateTime @default(now())
-  seenByAdmin Boolean  @default(false)
-  seenByUser  Boolean  @default(false)
+  sender         String
+  text           String
+  createdAt      DateTime            @default(now())
+  seenByAdmin    Boolean             @default(false)
+  seenByUser     Boolean             @default(false)
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id])
 }
 
 model Notification {
-  id        Int      @id @default(autoincrement())
-  user      User     @relation(fields: [userId], references: [id])
+  id        Int       @id @default(autoincrement())
   userId    Int
-
   /// "WITHDRAWAL_STATUS" | "INVESTMENT_STATUS" etc.
   type      String
-
   title     String
   message   String
-
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   readAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id])
 }
 
 model Withdrawal {
   id          Int       @id @default(autoincrement())
   userId      Int
-  user        User      @relation(fields: [userId], references: [id])
   amount      Int
   waveNumber  String
-  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED, PAID...
-  note        String? // message optionnel de l’utilisateur
+  status      String    @default("PENDING")
+  note        String?
   createdAt   DateTime  @default(now())
   processedAt DateTime?
+  user        User      @relation(fields: [userId], references: [id])
 }
 
-// ⚠️ On enlève l'enum (SQLite + ta version de Prisma ne le supporte pas)
-// enum InvestmentStatus { ... }
-
 model Investment {
-  id Int @id @default(autoincrement())
-
-  userId Int
-  user   User @relation(fields: [userId], references: [id])
-
+  id             Int       @id @default(autoincrement())
+  userId         Int
   principalXOF   Int
-  accruedGainXOF Int @default(0)
-
+  accruedGainXOF Int       @default(0)
   /// "PENDING" | "ACTIVE" | "REJECTED" | "CLOSED"
-  status String @default("PENDING")
-
-  createdAt  DateTime  @default(now())
-  approvedAt DateTime?
-  rejectedAt DateTime?
-  endDate    DateTime
-
-  // 👉 mémorise la dernière date de crédit
-  lastGainAt DateTime?
-
-  tierId Int
-  tier   Tier @relation(fields: [tierId], references: [id])
+  status         String    @default("PENDING")
+  createdAt      DateTime  @default(now())
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+  endDate        DateTime
+  lastGainAt     DateTime?
+  tierId         Int
+  tier           Tier      @relation(fields: [tierId], references: [id])
+  user           User      @relation(fields: [userId], references: [id])
 }
