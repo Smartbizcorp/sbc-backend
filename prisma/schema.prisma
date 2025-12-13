@@ -16,6 +16,13 @@ model User {
   passwordHash         String
   isActive             Boolean               @default(true)
   role                 String                @default("USER")
+
+  // ✅ Preuve d'acceptation CGU
+  acceptCguAt  DateTime?
+  cguVersion   String?
+  cguIp        String?
+  cguUserAgent String?
+
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   birthDate            DateTime?
