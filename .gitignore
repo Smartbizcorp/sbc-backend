@@ -2,3 +2,9 @@ node_modules/
 dist/
 .env
 dist-scripts/
+# Prisma generated
+node_modules/.prisma/
+
+# Prisma local backups
+prisma/migrations_backup/
+prisma/schema.before.cgu.prisma

@@ -734,6 +734,8 @@ function getDailyRateForPrincipal(): number {
 /* ------------------------------------------------------------------ */
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DURATION_DAYS = 90;
+const MAX_DURATION_MS = MAX_DURATION_DAYS * ONE_DAY_MS;
 
 cron.schedule("*/10 * * * *", async () => {
   const now = new Date();
@@ -741,80 +743,137 @@ cron.schedule("*/10 * * * *", async () => {
 
   try {
     const investments = await prisma.investment.findMany({
-      where: {
-        status: "ACTIVE",
-        endDate: { gt: now },
-      },
+      where: { status: "ACTIVE" },
     });
 
     for (const inv of investments) {
+      const investmentAgeMs = now.getTime() - inv.createdAt.getTime();
+
+      /* ============================================================ */
+      /*              🛑 CLOTURE ABSOLUE À 90 JOURS                    */
+      /* ============================================================ */
+      if (investmentAgeMs >= MAX_DURATION_MS) {
+        await prisma.$transaction(async (tx) => {
+          const fresh = await tx.investment.findUnique({
+            where: { id: inv.id },
+            select: { id: true, userId: true, status: true },
+          });
+
+          if (!fresh || fresh.status !== "ACTIVE") return;
+
+          // 1️⃣ Clôture définitive
+          await tx.investment.update({
+            where: { id: fresh.id },
+            data: {
+              status: "CLOSED",
+              endDate: now,
+            },
+          });
+
+          // 2️⃣ Notification UNIQUE J+90
+          await tx.notification.create({
+            data: {
+              userId: fresh.userId,
+              type: "INVESTMENT_MATURED",
+              title: "Investissement arrivé à échéance",
+              message: "Votre investissement est arrivé à échéance.",
+            },
+          });
+        });
+
+        logger.info(
+          { investmentId: inv.id, userId: inv.userId },
+          "[CRON] Investissement clôturé + notification (J+90)"
+        );
+
+        continue;
+      }
+
+      /* ============================================================ */
+      /*                   ⏱ CALCUL DES GAINS                         */
+      /* ============================================================ */
+
       const last = inv.lastGainAt ?? inv.createdAt;
       const diffMs = now.getTime() - last.getTime();
 
-      // On ne crédite que si au moins 1 jour s'est écoulé
+      // Crédit uniquement si ≥ 1 jour
       if (diffMs < ONE_DAY_MS) continue;
 
       const daysToCredit = Math.floor(diffMs / ONE_DAY_MS);
       if (daysToCredit <= 0) continue;
 
+      // Limite stricte jusqu'à 90 jours
+      const daysSinceStart = Math.floor(
+        (last.getTime() - inv.createdAt.getTime()) / ONE_DAY_MS
+      );
+
+      const remainingDays = MAX_DURATION_DAYS - daysSinceStart;
+      if (remainingDays <= 0) continue;
+
+      const effectiveDays = Math.min(daysToCredit, remainingDays);
+
       const rate = getDailyRateForPrincipal();
       const gainPerDay = Math.round(inv.principalXOF * rate);
-      const totalGain = gainPerDay * daysToCredit;
+      const totalGain = gainPerDay * effectiveDays;
 
-      // 🧱 TOUT : investment + wallet + ledgerEntry en transaction
       await prisma.$transaction(async (tx) => {
-        // On relit l'investissement dans la transaction
         const freshInv = await tx.investment.findUnique({
           where: { id: inv.id },
         });
 
-        if (!freshInv) {
-          throw new Error(`INVESTMENT_NOT_FOUND_CRON#${inv.id}`);
-        }
-
-        // Si plus ACTIVE ou arrivé à terme, on skip.
-        if (freshInv.status !== "ACTIVE" || freshInv.endDate <= now) {
-          return;
-        }
+        if (!freshInv || freshInv.status !== "ACTIVE") return;
 
         const lastGainAt = freshInv.lastGainAt ?? freshInv.createdAt;
         const diffMsInner = now.getTime() - lastGainAt.getTime();
-        if (diffMsInner < ONE_DAY_MS) {
-          return;
-        }
+        if (diffMsInner < ONE_DAY_MS) return;
 
         const daysToCreditInner = Math.floor(diffMsInner / ONE_DAY_MS);
         if (daysToCreditInner <= 0) return;
 
-        const gainPerDayInner = Math.round(freshInv.principalXOF * rate);
-        const totalGainInner = gainPerDayInner * daysToCreditInner;
-
-        const newLastGainAt = new Date(
-          lastGainAt.getTime() + daysToCreditInner * ONE_DAY_MS
+        const daysSinceStartInner = Math.floor(
+          (lastGainAt.getTime() - freshInv.createdAt.getTime()) / ONE_DAY_MS
         );
 
-        // 1️⃣ MAJ investissement
+        const remainingDaysInner = MAX_DURATION_DAYS - daysSinceStartInner;
+        if (remainingDaysInner <= 0) return;
+
+        const effectiveDaysInner = Math.min(
+          daysToCreditInner,
+          remainingDaysInner
+        );
+
+        const gainPerDayInner = Math.round(
+          freshInv.principalXOF * rate
+        );
+        const totalGainInner =
+          gainPerDayInner * effectiveDaysInner;
+
+        const newLastGainAt = new Date(
+          lastGainAt.getTime() +
+            effectiveDaysInner * ONE_DAY_MS
+        );
+
+        // 1️⃣ Investment
         await tx.investment.update({
           where: { id: freshInv.id },
           data: {
-            accruedGainXOF: freshInv.accruedGainXOF + totalGainInner,
+            accruedGainXOF:
+              freshInv.accruedGainXOF + totalGainInner,
             lastGainAt: newLastGainAt,
           },
         });
 
-        // 2️⃣ MAJ wallet
+        // 2️⃣ Wallet
         await tx.wallet.upsert({
           where: { userId: freshInv.userId },
-          update: {
-            balance: { increment: totalGainInner },
-          },
+          update: { balance: { increment: totalGainInner } },
           create: {
             userId: freshInv.userId,
             balance: totalGainInner,
           },
         });
 
-        // 3️⃣ Ledger entry
+        // 3️⃣ Ledger
         await tx.ledgerEntry.create({
           data: {
             userId: freshInv.userId,
@@ -829,21 +888,20 @@ cron.schedule("*/10 * * * *", async () => {
           {
             investmentId: freshInv.id,
             userId: freshInv.userId,
+            creditedDays: effectiveDaysInner,
             totalGain: totalGainInner,
-            daysToCredit: daysToCreditInner,
           },
-          "[CRON] Gains crédités et journalisés (transaction)"
+          "[CRON] Gains crédités (limités à 90 jours)"
         );
       });
     }
   } catch (err) {
     logger.error(
       { err },
-      "[CRON] Erreur lors de la mise à jour des gains (transaction)"
+      "[CRON] Erreur lors de la mise à jour des gains"
     );
   }
 });
-
 
 /* ------------------------------------------------------------------ */
 /*                                 FAQ                                 */
@@ -1843,6 +1901,14 @@ app.post(
             throw error;
           }
 
+          // ✅ NOTIFICATIONS (dernières 5) pour affichage dans "Activité récente"
+      const notifications = await prisma.notification.findMany({
+            where: { userId },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+          });
+
+
           // 2️⃣ Récupérer le wallet
           const wallet = await tx.wallet.findUnique({
             where: { userId },
@@ -2367,10 +2433,12 @@ app.get(
 
       const investments = await prisma.investment.findMany({
         where: { userId, status: "ACTIVE" },
+        orderBy: { createdAt: "desc" },
       });
 
       const withdrawals = await prisma.withdrawal.findMany({
         where: { userId },
+        orderBy: { createdAt: "desc" },
       });
 
       const wallet = await prisma.wallet.findUnique({
@@ -2404,25 +2472,63 @@ app.get(
         where: { userId, createdAt: { gte: monday } },
       });
 
+      // ✅ 1) JOURS RESTANTS (sur l'investissement actif le plus proche de l'échéance)
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+      const MAX_DAYS = 90;
+
+      let minDaysRemaining: number | null = null;
+      let minDaysElapsed: number | null = null;
+
+      for (const inv of investments) {
+        const elapsed = Math.min(
+          MAX_DAYS,
+          Math.max(
+            0,
+            Math.floor((Date.now() - inv.createdAt.getTime()) / ONE_DAY_MS)
+          )
+        );
+        const remaining = Math.max(0, MAX_DAYS - elapsed);
+
+        if (minDaysRemaining === null || remaining < minDaysRemaining) {
+          minDaysRemaining = remaining;
+          minDaysElapsed = elapsed;
+        }
+      }
+
+      // ✅ 2) NOTIFICATIONS (dernières 5) pour les inclure dans "Activité récente"
+      const notifications = await prisma.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      });
+
       const recentEvents = [
-        ...withdrawals.slice(0, 5).map((w) => ({
-          type: "WITHDRAWAL" as const,
-          date: w.createdAt,
-          label: w.status === "PENDING" ? "Retrait demandé" : "Retrait traité",
-          detail: `${w.amount.toLocaleString("fr-FR")} XOF`,
-        })),
-        ...investments.slice(0, 5).map((i) => ({
-          type: "INVESTMENT" as const,
-          date: i.createdAt,
-          label: "Investissement lancé",
-          detail: `${i.principalXOF.toLocaleString("fr-FR")} XOF`,
-        })),
-      ]
-        .sort(
-          (a, b) =>
-            new Date(b.date).getTime() - new Date(a.date).getTime()
-        )
-        .slice(0, 5);
+  // Withdrawals
+  ...withdrawals.slice(0, 5).map((w) => ({
+    type: "WITHDRAWAL" as const,
+    date: w.createdAt.toISOString(),
+    label: w.status === "PENDING" ? "Retrait demandé" : "Retrait traité",
+    detail: `${w.amount.toLocaleString("fr-FR")} XOF`,
+  })),
+
+  // Investments
+  ...investments.slice(0, 5).map((i) => ({
+    type: "INVESTMENT" as const,
+    date: i.createdAt.toISOString(),
+    label: "Investissement lancé",
+    detail: `${i.principalXOF.toLocaleString("fr-FR")} XOF`,
+  })),
+
+  // Notifications (dont la notif J+90 "échéance")
+  ...notifications.map((n) => ({
+    type: "INVESTMENT" as const, // on réutilise le type existant côté front
+    date: n.createdAt.toISOString(),
+    label: n.title || "Notification",
+    detail: n.message || "",
+  })),
+]
+  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  .slice(0, 5);
 
       res.json({
         success: true,
@@ -2436,6 +2542,11 @@ app.get(
             .filter((w) => w.status === "PENDING")
             .reduce((s, w) => s + w.amount, 0),
           recentEvents,
+
+          // ✅ NOUVEAU : jours restants pour le dashboard
+          minDaysRemaining,
+          minDaysElapsed,
+
           remainingWithdrawals: Math.max(
             weeklyWithdrawalLimit - withdrawalsThisWeek,
             0

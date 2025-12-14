@@ -28,7 +28,15 @@ interface AuthRequest extends Request {
   };
 }
 
-// Zod schemas (les mêmes que dans ton index.ts “monolithique”)
+// Mot de passe fort
+function isStrongPassword(pwd: string): boolean {
+  return pwd.length >= 8 && /[A-Za-z]/.test(pwd) && /\d/.test(pwd);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               ✅ Zod schemas                                */
+/* -------------------------------------------------------------------------- */
+
 const registerSchema = z.object({
   fullName: z.string().min(3, "Nom trop court."),
   phone: z.string().min(6, "Téléphone invalide."),
@@ -39,17 +47,23 @@ const registerSchema = z.object({
     .or(z.literal("").optional()),
   waveNumber: z.string().min(6, "Numéro Wave invalide."),
   password: z.string().min(8, "Mot de passe trop court (min 8 caractères)."),
-});
+
+  // 🔐 Question + réponse sécurité (ton front les envoie)
+  securityQuestion: z.string().min(1, "Veuillez choisir une question de sécurité."),
+  securityAnswer: z.string().min(1, "Veuillez renseigner la réponse à la question de sécurité."),
+
+  // ✅ CGU obligatoire
+  acceptCgu: z
+  .boolean()
+  .refine((v) => v === true, {
+    message: "Vous devez accepter les Conditions Générales d’Utilisation (CGU).",
+  }),
+  })
 
 const loginSchema = z.object({
   phone: z.string().min(6, "Téléphone invalide."),
   password: z.string().min(1, "Mot de passe requis."),
 });
-
-// Mot de passe fort
-function isStrongPassword(pwd: string): boolean {
-  return pwd.length >= 8 && /[A-Za-z]/.test(pwd) && /\d/.test(pwd);
-}
 
 /* -------------------------------------------------------------------------- */
 /*                          🔐 Anti brute-force login                          */
@@ -90,7 +104,6 @@ export const loginLimiter = rateLimit({
 
 /* -------------------------------------------------------------------------- */
 /*                            🧑‍💻 REGISTER (POST)                             */
-/*            Endpoint final : POST /api/register (si monté sur /api)         */
 /* -------------------------------------------------------------------------- */
 
 router.post(
@@ -110,7 +123,16 @@ router.post(
         });
       }
 
-      const { fullName, phone, email, waveNumber, password } = parseResult.data;
+      const {
+        fullName,
+        phone,
+        email,
+        waveNumber,
+        password,
+        securityQuestion,
+        securityAnswer,
+        acceptCgu, // (Zod garantit que c’est true)
+      } = parseResult.data;
 
       // Vérif force du mot de passe
       if (!isStrongPassword(password)) {
@@ -146,7 +168,22 @@ router.post(
         }
       }
 
+      // Hash mot de passe
       const passwordHash = await bcrypt.hash(password, 10);
+
+      // 🔐 Hash réponse de sécurité
+      const securityAnswerHash = await bcrypt.hash(securityAnswer.trim(), 10);
+
+      // ✅ Preuve CGU
+      const ip =
+        ((req.headers["x-forwarded-for"] as string)
+          ?.split(",")[0]
+          ?.trim()) ||
+        req.socket?.remoteAddress ||
+        null;
+
+      const userAgent = req.headers["user-agent"] ?? null;
+      const CGU_VERSION = process.env.CGU_VERSION ?? "v1.0";
 
       const user = await prisma.user.create({
         data: {
@@ -157,6 +194,17 @@ router.post(
           passwordHash,
           isActive: true,
           role: "USER",
+
+          // 🔐 Stockage sécurisé de la question / réponse
+          securityQuestion: securityQuestion.trim(),
+          securityAnswerHash,
+
+          // ✅ Preuve d'acceptation CGU
+          acceptCguAt: new Date(),
+          cguVersion: CGU_VERSION,
+          cguIp: ip,
+          cguUserAgent: userAgent,
+
           // Optionnel : si tu veux créer un wallet dès l'inscription :
           // wallet: { create: {} },
         },
@@ -180,7 +228,6 @@ router.post(
 
 /* -------------------------------------------------------------------------- */
 /*                             🔐 LOGIN (POST)                                */
-/*            Endpoint final : POST /api/login (si monté sur /api)           */
 /* -------------------------------------------------------------------------- */
 
 router.post("/login", loginLimiter, async (req: Request, res: Response) => {
