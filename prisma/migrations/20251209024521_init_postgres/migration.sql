@@ -1,1 +1,155 @@
-﻿-- CreateTable CREATE TABLE "User" (     "id" SERIAL NOT NULL,     "fullName" TEXT NOT NULL,     "phone" TEXT NOT NULL,     "email" TEXT,     "waveNumber" TEXT NOT NULL,     "passwordHash" TEXT NOT NULL,     "isActive" BOOLEAN NOT NULL DEFAULT true,     "role" TEXT NOT NULL DEFAULT 'USER',     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "updatedAt" TIMESTAMP(3) NOT NULL,     "birthDate" TIMESTAMP(3),     "idType" TEXT,     "idNumber" TEXT,     "orangeMoneyNumber" TEXT,     "country" TEXT,     "city" TEXT,     "securityQuestion" TEXT,     "securityAnswerHash" TEXT,      CONSTRAINT "User_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "LedgerEntry" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "type" TEXT NOT NULL,     "amount" INTEGER NOT NULL,     "source" TEXT NOT NULL,     "reference" TEXT,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,      CONSTRAINT "LedgerEntry_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "PushSubscription" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "endpoint" TEXT NOT NULL,     "p256dh" TEXT NOT NULL,     "auth" TEXT NOT NULL,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,      CONSTRAINT "PushSubscription_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Session" (     "id" SERIAL NOT NULL,     "jti" TEXT NOT NULL,     "userId" INTEGER NOT NULL,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "revokedAt" TIMESTAMP(3),     "userAgent" TEXT,     "ipHash" TEXT,     "lastSeenAt" TIMESTAMP(3),      CONSTRAINT "Session_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Wallet" (     "id" SERIAL NOT NULL,     "balance" INTEGER NOT NULL DEFAULT 0,     "userId" INTEGER NOT NULL,      CONSTRAINT "Wallet_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Tier" (     "id" SERIAL NOT NULL,     "amountXOF" INTEGER NOT NULL,      CONSTRAINT "Tier_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "SupportConversation" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "status" TEXT NOT NULL DEFAULT 'OPEN',     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "updatedAt" TIMESTAMP(3) NOT NULL,      CONSTRAINT "SupportConversation_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "SupportMessage" (     "id" SERIAL NOT NULL,     "conversationId" INTEGER NOT NULL,     "sender" TEXT NOT NULL,     "text" TEXT NOT NULL,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "seenByAdmin" BOOLEAN NOT NULL DEFAULT false,     "seenByUser" BOOLEAN NOT NULL DEFAULT false,      CONSTRAINT "SupportMessage_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Notification" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "type" TEXT NOT NULL,     "title" TEXT NOT NULL,     "message" TEXT NOT NULL,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "readAt" TIMESTAMP(3),      CONSTRAINT "Notification_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Withdrawal" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "amount" INTEGER NOT NULL,     "waveNumber" TEXT NOT NULL,     "status" TEXT NOT NULL DEFAULT 'PENDING',     "note" TEXT,     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "processedAt" TIMESTAMP(3),      CONSTRAINT "Withdrawal_pkey" PRIMARY KEY ("id") );  -- CreateTable CREATE TABLE "Investment" (     "id" SERIAL NOT NULL,     "userId" INTEGER NOT NULL,     "principalXOF" INTEGER NOT NULL,     "accruedGainXOF" INTEGER NOT NULL DEFAULT 0,     "status" TEXT NOT NULL DEFAULT 'PENDING',     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,     "approvedAt" TIMESTAMP(3),     "rejectedAt" TIMESTAMP(3),     "endDate" TIMESTAMP(3) NOT NULL,     "lastGainAt" TIMESTAMP(3),     "tierId" INTEGER NOT NULL,      CONSTRAINT "Investment_pkey" PRIMARY KEY ("id") );  -- CreateIndex CREATE UNIQUE INDEX "User_phone_key" ON "User"("phone");  -- CreateIndex CREATE UNIQUE INDEX "PushSubscription_endpoint_key" ON "PushSubscription"("endpoint");  -- CreateIndex CREATE UNIQUE INDEX "Session_jti_key" ON "Session"("jti");  -- CreateIndex CREATE UNIQUE INDEX "Wallet_userId_key" ON "Wallet"("userId");  -- AddForeignKey ALTER TABLE "LedgerEntry" ADD CONSTRAINT "LedgerEntry_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "PushSubscription" ADD CONSTRAINT "PushSubscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Wallet" ADD CONSTRAINT "Wallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "SupportConversation" ADD CONSTRAINT "SupportConversation_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "SupportMessage" ADD CONSTRAINT "SupportMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "SupportConversation"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Withdrawal" ADD CONSTRAINT "Withdrawal_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Investment" ADD CONSTRAINT "Investment_tierId_fkey" FOREIGN KEY ("tierId") REFERENCES "Tier"("id") ON DELETE RESTRICT ON UPDATE CASCADE;  -- AddForeignKey ALTER TABLE "Investment" ADD CONSTRAINT "Investment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE; 
+-- CreateTable
+CREATE TABLE "User" (
+    "id" SERIAL NOT NULL,
+    "fullName" TEXT NOT NULL,
+    "phone" TEXT NOT NULL,
+    "email" TEXT,
+    "waveNumber" TEXT NOT NULL,
+    "passwordHash" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "role" TEXT NOT NULL DEFAULT 'USER',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "birthDate" TIMESTAMP(3),
+    "idType" TEXT,
+    "idNumber" TEXT,
+    "orangeMoneyNumber" TEXT,
+    "country" TEXT,
+    "city" TEXT,
+    "securityQuestion" TEXT,
+    "securityAnswerHash" TEXT,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "LedgerEntry" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "type" TEXT NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "source" TEXT NOT NULL,
+    "reference" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "LedgerEntry_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Session" (
+    "id" SERIAL NOT NULL,
+    "jti" TEXT NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "revokedAt" TIMESTAMP(3),
+    "userAgent" TEXT,
+    "ipHash" TEXT,
+    "lastSeenAt" TIMESTAMP(3),
+
+    CONSTRAINT "Session_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Wallet" (
+    "id" SERIAL NOT NULL,
+    "balance" INTEGER NOT NULL DEFAULT 0,
+    "userId" INTEGER NOT NULL,
+
+    CONSTRAINT "Wallet_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Tier" (
+    "id" SERIAL NOT NULL,
+    "amountXOF" INTEGER NOT NULL,
+
+    CONSTRAINT "Tier_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SupportConversation" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SupportConversation_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SupportMessage" (
+    "id" SERIAL NOT NULL,
+    "conversationId" INTEGER NOT NULL,
+    "sender" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "seenByAdmin" BOOLEAN NOT NULL DEFAULT false,
+    "seenByUser" BOOLEAN NOT NULL DEFAULT false,
+
+    CONSTRAINT "SupportMessage_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Withdrawal" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "amount" INTEGER NOT NULL,
+    "waveNumber" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processedAt" TIMESTAMP(3),
+
+    CONSTRAINT "Withdrawal_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Investment" (
+    "id" SERIAL NOT NULL,
+    "userId" INTEGER NOT NULL,
+    "principalXOF" INTEGER NOT NULL,
+    "accruedGainXOF" INTEGER NOT NULL DEFAULT 0,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "approvedAt" TIMESTAMP(3),
+    "rejectedAt" TIMESTAMP(3),
+    "endDate" TIMESTAMP(3) NOT NULL,
+    "lastGainAt" TIMESTAMP(3),
+    "tierId" INTEGER NOT NULL,
+
+    CONSTRAINT "Investment_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "User_phone_key" ON "User"("phone");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Session_jti_key" ON "Session"("jti");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Wallet_userId_key" ON "Wallet"("userId");
+
+-- AddForeignKey
+ALTER TABLE "LedgerEntry" ADD CONSTRAINT "LedgerEntry_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Session" ADD CONSTRAINT "Session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Wallet" ADD CONSTRAINT "Wallet_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupportConversation" ADD CONSTRAINT "SupportConversation_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupportMessage" ADD CONSTRAINT "SupportMessage_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "SupportConversation"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Withdrawal" ADD CONSTRAINT "Withdrawal_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Investment" ADD CONSTRAINT "Investment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Investment" ADD CONSTRAINT "Investment_tierId_fkey" FOREIGN KEY ("tierId") REFERENCES "Tier"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
