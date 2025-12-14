@@ -1,1 +1,5 @@
-﻿-- AlterTable ALTER TABLE "User" ADD COLUMN     "acceptCguAt" TIMESTAMP(3), ADD COLUMN     "cguIp" TEXT, ADD COLUMN     "cguUserAgent" TEXT, ADD COLUMN     "cguVersion" TEXT; 
+ALTER TABLE "User"
+ADD COLUMN "acceptCguAt" TIMESTAMP(3),
+ADD COLUMN "cguIp" TEXT,
+ADD COLUMN "cguUserAgent" TEXT,
+ADD COLUMN "cguVersion" TEXT;
