@@ -3,6 +3,8 @@ import {
   saveSubscriptionForUser,
   sendPushToUser,
 } from "./services/push";
+import adminCguRouter from "./routes/adminCgu";
+import adminCguPdfRouter from "./routes/adminCguPdf";
 import adminInvestmentsRouter from "./routes/adminInvestments";
 import * as Sentry from "@sentry/node";
 import { createNotificationForUser, NotificationType } from "./services/notifications";
@@ -443,6 +445,8 @@ if (isProd) {
   );
 }
 
+app.use("/api/admin", adminCguRouter);
+app.use("/api", adminCguPdfRouter);
 app.use(express.json());
 app.use(cookieParser());
 

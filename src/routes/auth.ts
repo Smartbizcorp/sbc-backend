@@ -1,3 +1,4 @@
+// src/routes/auth.ts
 import { Router, Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import { z } from "zod";
@@ -7,14 +8,16 @@ import rateLimit from "express-rate-limit";
 import { randomUUID } from "crypto";
 import logger from "../logger";
 
+import { JWT_SECRET } from "../config/jwt"; // adapte le chemin relatif;
+
 const prisma = new PrismaClient();
 const router = Router();
 
-import { JWT_SECRET } from "../config/jwt"; // adapte le chemin relatif;
-
 if (!JWT_SECRET) {
   logger.error("JWT_SECRET manquant dans les variables d'environnement (.env).");
-  throw new Error("JWT_SECRET manquant dans les variables d'environnement (.env).");
+  throw new Error(
+    "JWT_SECRET manquant dans les variables d'environnement (.env)."
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -33,6 +36,19 @@ function isStrongPassword(pwd: string): boolean {
   return pwd.length >= 8 && /[A-Za-z]/.test(pwd) && /\d/.test(pwd);
 }
 
+// IP client robuste derrière proxy/CDN
+function getClientIp(req: Request): string | null {
+  const xff = req.headers["x-forwarded-for"];
+  const first =
+    typeof xff === "string"
+      ? xff.split(",")[0]?.trim()
+      : Array.isArray(xff)
+      ? xff[0]
+      : null;
+
+  return first || req.socket?.remoteAddress || null;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                               ✅ Zod schemas                                */
 /* -------------------------------------------------------------------------- */
@@ -49,16 +65,20 @@ const registerSchema = z.object({
   password: z.string().min(8, "Mot de passe trop court (min 8 caractères)."),
 
   // 🔐 Question + réponse sécurité (ton front les envoie)
-  securityQuestion: z.string().min(1, "Veuillez choisir une question de sécurité."),
-  securityAnswer: z.string().min(1, "Veuillez renseigner la réponse à la question de sécurité."),
+  securityQuestion: z
+    .string()
+    .min(1, "Veuillez choisir une question de sécurité."),
+  securityAnswer: z
+    .string()
+    .min(1, "Veuillez renseigner la réponse à la question de sécurité."),
 
-  // ✅ CGU obligatoire
+  // ✅ CGU obligatoire (correction de ton erreur TS : pas de z.literal(boolean))
   acceptCgu: z
-  .boolean()
-  .refine((v) => v === true, {
-    message: "Vous devez accepter les Conditions Générales d’Utilisation (CGU).",
-  }),
-  })
+    .boolean()
+    .refine((v) => v === true, {
+      message: "Vous devez accepter les Conditions Générales d’Utilisation (CGU).",
+    }),
+});
 
 const loginSchema = z.object({
   phone: z.string().min(6, "Téléphone invalide."),
@@ -106,125 +126,124 @@ export const loginLimiter = rateLimit({
 /*                            🧑‍💻 REGISTER (POST)                             */
 /* -------------------------------------------------------------------------- */
 
-router.post(
-  "/register",
-  registerLimiter,
-  async (req: Request, res: Response) => {
-    try {
-      const parseResult = registerSchema.safeParse(req.body);
+router.post("/register", registerLimiter, async (req: Request, res: Response) => {
+  try {
+    const parseResult = registerSchema.safeParse(req.body);
 
-      if (!parseResult.success) {
-        const msg =
-          parseResult.error.issues[0]?.message ||
-          "Données d'inscription invalides.";
-        return res.status(400).json({
-          success: false,
-          message: msg,
-        });
-      }
-
-      const {
-        fullName,
-        phone,
-        email,
-        waveNumber,
-        password,
-        securityQuestion,
-        securityAnswer,
-        acceptCgu, // (Zod garantit que c’est true)
-      } = parseResult.data;
-
-      // Vérif force du mot de passe
-      if (!isStrongPassword(password)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Mot de passe trop faible. Minimum 8 caractères avec au moins une lettre et un chiffre.",
-        });
-      }
-
-      const cleanedEmail =
-        email && email.trim() !== "" ? email.trim().toLowerCase() : null;
-
-      // Vérif unicité téléphone
-      const existingPhone = await prisma.user.findUnique({ where: { phone } });
-      if (existingPhone) {
-        return res.status(400).json({
-          success: false,
-          message: "Ce numéro est déjà utilisé.",
-        });
-      }
-
-      // Vérif unicité email
-      if (cleanedEmail) {
-        const existingEmail = await prisma.user.findFirst({
-          where: { email: cleanedEmail },
-        });
-        if (existingEmail) {
-          return res.status(400).json({
-            success: false,
-            message: "Cet email existe déjà.",
-          });
-        }
-      }
-
-      // Hash mot de passe
-      const passwordHash = await bcrypt.hash(password, 10);
-
-      // 🔐 Hash réponse de sécurité
-      const securityAnswerHash = await bcrypt.hash(securityAnswer.trim(), 10);
-
-      // ✅ Preuve CGU
-      const ip =
-        ((req.headers["x-forwarded-for"] as string)
-          ?.split(",")[0]
-          ?.trim()) ||
-        req.socket?.remoteAddress ||
-        null;
-
-      const userAgent = req.headers["user-agent"] ?? null;
-      const CGU_VERSION = process.env.CGU_VERSION ?? "v1.0";
-
-      const user = await prisma.user.create({
-        data: {
-          fullName,
-          phone,
-          waveNumber,
-          email: cleanedEmail,
-          passwordHash,
-          isActive: true,
-          role: "USER",
-
-          // 🔐 Stockage sécurisé de la question / réponse
-          securityQuestion: securityQuestion.trim(),
-          securityAnswerHash,
-
-          // ✅ Preuve d'acceptation CGU
-          acceptCguAt: new Date(),
-          cguVersion: CGU_VERSION,
-          cguIp: ip,
-          cguUserAgent: userAgent,
-
-          // Optionnel : si tu veux créer un wallet dès l'inscription :
-          // wallet: { create: {} },
-        },
-      });
-
-      logger.info(
-        { userId: user.id, phone: user.phone },
-        "[AUTH] Nouvel utilisateur inscrit"
-      );
-
-      return res.json({ success: true, userId: user.id });
-    } catch (err) {
-      logger.error({ err }, "[AUTH] Erreur register");
-      return res.status(500).json({
+    if (!parseResult.success) {
+      const msg =
+        parseResult.error.issues[0]?.message || "Données d'inscription invalides.";
+      return res.status(400).json({
         success: false,
-        message: "Erreur serveur lors de l'inscription.",
+        message: msg,
       });
     }
+
+    const {
+      fullName,
+      phone,
+      email,
+      waveNumber,
+      password,
+      securityQuestion,
+      securityAnswer,
+      acceptCgu, // Zod garantit que c'est true, mais on le garde pour clarté
+    } = parseResult.data;
+
+    // Défense supplémentaire (au cas où)
+    if (!acceptCgu) {
+      return res.status(400).json({
+        success: false,
+        message: "Vous devez accepter les CGU pour créer un compte.",
+      });
+    }
+
+    // Vérif force du mot de passe
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Mot de passe trop faible. Minimum 8 caractères avec au moins une lettre et un chiffre.",
+      });
+    }
+
+    const cleanedEmail =
+      email && email.trim() !== "" ? email.trim().toLowerCase() : null;
+
+    // Vérif unicité téléphone
+    const existingPhone = await prisma.user.findUnique({ where: { phone } });
+    if (existingPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Ce numéro est déjà utilisé.",
+      });
+    }
+
+    // Vérif unicité email
+    if (cleanedEmail) {
+      const existingEmail = await prisma.user.findFirst({
+        where: { email: cleanedEmail },
+      });
+      if (existingEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "Cet email existe déjà.",
+        });
+      }
+    }
+
+    // Hash mot de passe
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // 🔐 Hash réponse de sécurité
+    const securityAnswerHash = await bcrypt.hash(securityAnswer.trim(), 10);
+
+    // ✅ Preuve CGU (avec hash)
+    const cguVersion = process.env.CGU_VERSION ?? "v1.0";
+    const cguHash = process.env.CGU_TEXT_SHA256 ?? null; // <-- mets ici le hash du PDF (recommandé)
+    const cguIp = getClientIp(req);
+    const cguUserAgent = req.headers["user-agent"] ?? null;
+
+    const user = await prisma.user.create({
+      data: {
+        fullName,
+        phone,
+        waveNumber,
+        email: cleanedEmail,
+        passwordHash,
+        isActive: true,
+        role: "USER",
+
+        // 🔐 Stockage sécurisé de la question / réponse
+        securityQuestion: securityQuestion.trim(),
+        securityAnswerHash,
+
+        // ✅ PREUVE ACCEPTATION CGU
+        acceptCguAt: new Date(),
+        cguVersion,
+        cguHash,
+        cguIp,
+        cguUserAgent,
+
+        // Optionnel : wallet créé à l'inscription
+        // wallet: { create: {} },
+      },
+    });
+
+    logger.info(
+      { userId: user.id, phone: user.phone },
+      "[AUTH] Nouvel utilisateur inscrit"
+    );
+
+    return res.json({ success: true, userId: user.id });
+  } catch (err) {
+    logger.error({ err }, "[AUTH] Erreur register");
+    return res.status(500).json({
+      success: false,
+      message: "Erreur serveur lors de l'inscription.",
+    });
   }
-);
+});
 
 /* -------------------------------------------------------------------------- */
 /*                             🔐 LOGIN (POST)                                */
@@ -236,8 +255,7 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
 
     if (!parseResult.success) {
       const msg =
-        parseResult.error.issues[0]?.message ||
-        "Données de connexion invalides.";
+        parseResult.error.issues[0]?.message || "Données de connexion invalides.";
       return res.status(400).json({ success: false, message: msg });
     }
 
@@ -260,11 +278,7 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { phone } });
     if (!user) {
       // On incrémente le compteur d’échecs même si l’utilisateur n’existe pas
-      const current = loginAttempts.get(phone) || {
-        count: 0,
-        lockedUntil: null,
-      };
-
+      const current = loginAttempts.get(phone) || { count: 0, lockedUntil: null };
       current.count += 1;
 
       if (current.count >= MAX_LOGIN_ATTEMPTS) {
@@ -294,11 +308,7 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
 
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) {
-      const current = loginAttempts.get(phone) || {
-        count: 0,
-        lockedUntil: null,
-      };
-
+      const current = loginAttempts.get(phone) || { count: 0, lockedUntil: null };
       current.count += 1;
 
       if (current.count >= MAX_LOGIN_ATTEMPTS) {
@@ -327,14 +337,12 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
     }
 
     // ✅ Login OK → reset des tentatives
-    if (loginAttempts.has(phone)) {
-      loginAttempts.delete(phone);
-    }
+    if (loginAttempts.has(phone)) loginAttempts.delete(phone);
 
     // 🆔 Générer un identifiant unique de session (jti)
     const jti = randomUUID();
 
-    // IP simplifiée (tu peux l'améliorer en hash)
+    // IP simplifiée
     const ip =
       (req.headers["x-forwarded-for"] as string) ||
       req.socket.remoteAddress ||
@@ -350,7 +358,7 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
       },
     });
 
-    // Token signé avec jti (même format que ton authMiddleware)
+    // Token signé avec jti
     const token = jwt.sign(
       { userId: user.id, role: user.role as "USER" | "ADMIN", jti },
       JWT_SECRET,
@@ -365,10 +373,7 @@ router.post("/login", loginLimiter, async (req: Request, res: Response) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    logger.info(
-      { userId: user.id, phone: user.phone },
-      "[AUTH] Connexion réussie"
-    );
+    logger.info({ userId: user.id, phone: user.phone }, "[AUTH] Connexion réussie");
 
     return res.json({
       success: true,
