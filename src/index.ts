@@ -3,6 +3,7 @@ import {
   saveSubscriptionForUser,
   sendPushToUser,
 } from "./services/push";
+import i18nTranslateRouter from "./routes/i18nTranslate";
 import adminCguRouter from "./routes/adminCgu";
 import adminCguPdfRouter from "./routes/adminCguPdf";
 import adminInvestmentsRouter from "./routes/adminInvestments";
@@ -415,6 +416,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use(cors(corsOptions));
+app.use("/api", i18nTranslateRouter);
 
 app.use(
   helmet({

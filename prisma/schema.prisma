@@ -44,6 +44,18 @@ model User {
   withdrawals          Withdrawal[]
 }
 
+model TranslationCache {
+  id        Int      @id @default(autoincrement())
+  locale    String
+  hash      String   @unique
+  source    String
+  target    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([locale])
+}
+
 model LedgerEntry {
   id        Int      @id @default(autoincrement())
   userId    Int
