@@ -364,34 +364,61 @@ Sentry.init({
 });
 
 /* ------------------------------------------------------------------ */
-/*                          CORS / SECURITY                            */
+/*                          CORS / SECURITY (UPDATED)                 */
 /* ------------------------------------------------------------------ */
 
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:4001",
-  "https://app.smart-business-corp.com",
-  "https://smart-business-corp.com",
+
+  // PROD
   "https://smartbusinesscorp.org",
+  "https://www.smartbusinesscorp.org",
+  "https://app.smartbusinesscorp.org",
+
+  // Vercel preview / prod
+  "https://sbc-frontend.vercel.app",
+  "https://sbc-frontend-git-main-smart-business-corp.vercel.app",
 ];
 
 const corsOptions: cors.CorsOptions = {
   origin(origin, callback) {
-    // ⚠️ autoriser les clients natifs / curl / Postman
+    // Autoriser Postman / curl / mobile / SSR
     if (!origin) return callback(null, true);
+
+    // Autoriser toutes les previews Vercel automatiquement
+    if (origin.endsWith(".vercel.app")) {
+      return callback(null, true);
+    }
 
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    return callback(new Error(`Origin non autorisée par CORS: ${origin}`));
+    return callback(
+      new Error(`CORS bloqué pour l'origine : ${origin}`)
+    );
   },
-  credentials: true,
-  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "X-Requested-With"],
+
+  credentials: true, // 🔑 OBLIGATOIRE pour cookies / sessions
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "X-Request-Id",
+  ],
+  exposedHeaders: ["X-Request-Id"],
+  optionsSuccessStatus: 204,
 };
 
-app.set("trust proxy", 1); // important derrière Cloudflare / proxy
+// ⚠️ IMPORTANT : AVANT toute route
+app.set("trust proxy", 1);
+app.use(cors(corsOptions));
+
+// ⚠️ Préflight explicite (OBLIGATOIRE pour POST cross-origin)
+app.options("*", cors(corsOptions));
+
 
 /* ------------------------------------------------------------------ */
 /*                         MIDDLEWARES GLOBAUX                         */
@@ -416,6 +443,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use("/api", i18nTranslateRouter);
 
 app.use(
