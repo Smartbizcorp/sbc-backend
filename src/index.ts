@@ -444,6 +444,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+app.use(express.json());
+app.use(cookieParser());
+
 app.use("/api", i18nTranslateRouter);
 
 app.use(
@@ -477,8 +480,7 @@ if (isProd) {
 
 app.use("/api/admin", adminCguRouter);
 app.use("/api", adminCguPdfRouter);
-app.use(express.json());
-app.use(cookieParser());
+
 
 // 🔐 Anti-XSS & sanitization globale
 app.use(sanitizeMiddleware);
